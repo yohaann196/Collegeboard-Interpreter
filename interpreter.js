@@ -444,15 +444,17 @@ class Env {
 }
 
 class Interpreter {
-  constructor(onOut, onIn) {
+  constructor(onOut, onIn, signal) {
     this.onOut=onOut;
     this.onIn=onIn;
+    this.signal=signal||null;
     this.globals=new Env();
     this.steps=0;
     this.LIMIT=200000;
   }
 
   tick() {
+    if (this.signal?.aborted) throw new Error('Execution stopped.');
     if (++this.steps > this.LIMIT)
       throw new Error('Execution limit reached — possible infinite loop.');
   }
@@ -654,13 +656,14 @@ class Interpreter {
 //  PUBLIC API
 // ─────────────────────────────────────────────
 
-async function runApcsp(src, onOutput, onInput) {
+async function runApcsp(src, onOutput, onInput, signal) {
   try {
     const tokens = new Lexer(src).tokenize();
     const ast    = new Parser(tokens).parse();
-    await new Interpreter(onOutput, onInput).run(ast);
+    await new Interpreter(onOutput, onInput, signal).run(ast);
   } catch(e) {
-    onOutput(e.message, 'error');
+    // Suppress error output when execution was deliberately stopped by the user.
+    if (!signal?.aborted) onOutput(e.message, 'error');
   }
 }
 

@@ -89,6 +89,7 @@ let nextId = 2;
 let activeId = 1;
 let fontSize = 13.5;
 let isRunning = false;
+let abortController = null;
 let inputResolve = null;
 let findMatches = [];
 let findIdx = 0;
@@ -163,7 +164,7 @@ function highlight(src) {
         continue;
       }
       // Numbers
-      if (/\d/.test(code[i]) || (code[i] === '-' && /\d/.test(code[i+1] || '') && (out.endsWith('←') || out.endsWith('(') || out.endsWith(',') || out.trim() === ''))) {
+      if (/\d/.test(code[i])) {
         let n = code[i++];
         while (i < code.length && /[\d.]/.test(code[i])) n += code[i++];
         out += `<span class="tok-number">${escHtml(n)}</span>`;
@@ -413,12 +414,13 @@ fileInput.addEventListener('change', e => {
 // ─────────────────────────────────────────────
 
 async function runCode() {
-  if (isRunning) return;
+  if (isRunning) { stopExecution(); return; }
   saveActive();
   const src = editor.value.trim();
   if (!src) return;
 
   isRunning = true;
+  abortController = new AbortController();
   btnRun.textContent = '■ Stop';
   btnRun.classList.add('running');
   setStatus('Running…', '');
@@ -426,20 +428,39 @@ async function runCode() {
   conPrint('▸ Running ' + (activeFile()?.name || 'file') + '…', 'info');
 
   const t0 = performance.now();
+  const { signal } = abortController;
 
   await runApcsp(
     src,
     (text, type) => conPrint(text, type),
-    () => requestStdin()
+    () => requestStdin(),
+    signal
   );
 
   const elapsed = ((performance.now() - t0) / 1000).toFixed(3);
-  conPrint(`▸ Finished in ${elapsed}s`, 'info');
+  if (signal.aborted) {
+    conPrint('▸ Execution stopped by user.', 'info');
+  } else {
+    conPrint(`▸ Finished in ${elapsed}s`, 'info');
+  }
 
   isRunning = false;
+  abortController = null;
   btnRun.textContent = '▶ Run';
   btnRun.classList.remove('running');
   setStatus('Ready');
+}
+
+function stopExecution() {
+  if (abortController) abortController.abort();
+  // If the interpreter is blocked waiting on stdin, unblock it so the
+  // abort signal can be checked on the next tick.
+  if (inputResolve) {
+    consoleStdin.classList.add('hidden');
+    const fn = inputResolve;
+    inputResolve = null;
+    fn('');
+  }
 }
 
 function requestStdin() {
@@ -551,6 +572,29 @@ function toggleComment() {
 }
 
 // ─────────────────────────────────────────────
+// indent selection (Tab / Edit → Indent)
+// ─────────────────────────────────────────────
+
+function indentSelection() {
+  const start = editor.selectionStart;
+  const end   = editor.selectionEnd;
+  const val   = editor.value;
+
+  const lineStart = val.lastIndexOf('\n', start - 1) + 1;
+  const lineEnd   = val.indexOf('\n', end);
+  const block     = val.slice(lineStart, lineEnd === -1 ? undefined : lineEnd);
+
+  const indented = block.split('\n').map(l => l ? '   ' + l : l).join('\n');
+  const newVal = val.slice(0, lineStart) + indented + (lineEnd === -1 ? '' : val.slice(lineEnd));
+  editor.value = newVal;
+  editor.selectionStart = start + 3;
+  editor.selectionEnd   = end + (indented.length - block.length);
+
+  onEditorInput();
+  markDirty();
+}
+
+// ─────────────────────────────────────────────
 // editor events
 // ─────────────────────────────────────────────
 
@@ -571,6 +615,21 @@ editor.addEventListener('keydown', e => {
     const en = editor.selectionEnd;
     editor.value = editor.value.slice(0, s) + '   ' + editor.value.slice(en);
     editor.selectionStart = editor.selectionEnd = s + 3;
+    onEditorInput();
+    return;
+  }
+  // Enter → auto-indent (preserve current indent; add extra level after '{')
+  if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
+    e.preventDefault();
+    const s = editor.selectionStart;
+    const val = editor.value;
+    const lineStart = val.lastIndexOf('\n', s - 1) + 1;
+    const currentLine = val.slice(lineStart, s);
+    const indent = currentLine.match(/^(\s*)/)?.[1] || '';
+    const extraIndent = currentLine.trimEnd().endsWith('{') ? '   ' : '';
+    const insertion = '\n' + indent + extraIndent;
+    editor.value = val.slice(0, s) + insertion + val.slice(editor.selectionEnd);
+    editor.selectionStart = editor.selectionEnd = s + insertion.length;
     onEditorInput();
     return;
   }
@@ -655,12 +714,23 @@ function handleMenuAction(action) {
     case 'save':    saveFile(); break;
     case 'example': loadExample(); break;
     case 'comment': toggleComment(); break;
+    case 'indent':  indentSelection(); break;
     case 'find':    openFind(); break;
     case 'run':     runCode(); break;
-    case 'stop':    /* TODO: abort controller */ break;
+    case 'stop':    stopExecution(); break;
     case 'clear-console': clearConsole(); break;
-    case 'toggle-sidebar': sidebar.style.display = sidebar.style.display === 'none' ? '' : 'none'; break;
-    case 'toggle-console': consolePanel.style.display = consolePanel.style.display === 'none' ? '' : 'none'; break;
+    case 'toggle-sidebar': {
+      const hidden = sidebar.style.display === 'none';
+      sidebar.style.display = hidden ? '' : 'none';
+      sidebarResize.style.display = hidden ? '' : 'none';
+      break;
+    }
+    case 'toggle-console': {
+      const hidden = consolePanel.style.display === 'none';
+      consolePanel.style.display = hidden ? '' : 'none';
+      consoleResize.style.display = hidden ? '' : 'none';
+      break;
+    }
     case 'zoom-in':  fontSize = Math.min(24, fontSize + 1); applyFontSize(); break;
     case 'zoom-out': fontSize = Math.max(9, fontSize - 1);  applyFontSize(); break;
     case 'reference': overlay.classList.remove('hidden'); break;
