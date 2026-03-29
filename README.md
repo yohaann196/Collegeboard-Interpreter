@@ -2,7 +2,6 @@
 
 A full browser-based IDE for **AP Computer Science Principles (APCSP) College Board pseudocode**. No install, no build step — just open `index.html`.
 
-![APCSP IDE screenshot](screenshot.png)
 
 ## Features
 
@@ -67,11 +66,7 @@ A full browser-based IDE for **AP Computer Science Principles (APCSP) College Bo
 | `Ctrl++` / `Ctrl+-` | Zoom in / out |
 | `Tab` | Insert 3 spaces |
 
-## Deploying to GitHub Pages
 
-1. Push to GitHub
-2. **Settings → Pages → Source:** `main` branch, root `/`
-3. Live at `https://<username>.github.io/<repo>/`
 
 ## Architecture
 
