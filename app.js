@@ -1,6 +1,5 @@
-// app.js — APCSP IDE glue
-// Wires up: multi-file tabs, syntax highlighting, line numbers,
-// resizable panels, find bar, menus, keyboard shortcuts, console I/O
+// app.js — APCSP IDE
+// Wires up: multi-file tabs, run/stop, console I/O, save/open
 
 'use strict';
 
@@ -10,7 +9,7 @@
 
 const DEFAULT_CODE = `// Welcome to the APCSP Pseudocode IDE!
 // Press Ctrl+Enter (or the Run button) to execute your code.
-// Open Help → Pseudocode Reference for a syntax cheat sheet.
+// Press the Help (?) button for a syntax cheat sheet.
 
 PROCEDURE greet(name)
 {
@@ -87,162 +86,30 @@ let files = [
 ];
 let nextId = 2;
 let activeId = 1;
-let fontSize = 13.5;
 let isRunning = false;
 let abortController = null;
 let inputResolve = null;
-let findMatches = [];
-let findIdx = 0;
 
 // ─────────────────────────────────────────────
 // DOM refs
 // ─────────────────────────────────────────────
 
 const editor         = document.getElementById('editor');
-const highlightCode  = document.getElementById('highlight-code');
-const gutter         = document.getElementById('gutter');
-const codeScroll     = document.getElementById('code-scroll');
 const tabBar         = document.getElementById('tab-bar');
-const fileTree       = document.getElementById('file-tree');
 const consoleOutput  = document.getElementById('console-output');
 const consoleStdin   = document.getElementById('console-stdin');
 const stdinInput     = document.getElementById('stdin-input');
 const stdinSend      = document.getElementById('stdin-send');
-const findBar        = document.getElementById('find-bar');
-const findInput      = document.getElementById('find-input');
-const findCount      = document.getElementById('find-count');
-const sbPos          = document.getElementById('sb-pos');
-const sbStatus       = document.getElementById('sb-status');
-const sbErr          = document.getElementById('sb-err');
 const activeFilename = document.getElementById('active-filename');
 const overlay        = document.getElementById('overlay');
-const sidebarResize  = document.getElementById('sidebar-resize');
-const consoleResize  = document.getElementById('console-resize');
-const sidebar        = document.getElementById('sidebar');
-const consolePanel   = document.getElementById('console-panel');
 const btnRun         = document.getElementById('btn-run');
 
 // ─────────────────────────────────────────────
-// syntax highlighting
+// helpers
 // ─────────────────────────────────────────────
-
-// keywords, builtins, etc
-const KW = /\b(IF|ELSE|REPEAT|TIMES|UNTIL|FOR|EACH|IN|PROCEDURE|RETURN|NOT|AND|OR|MOD|DISPLAY|INPUT|APPEND|REMOVE|INSERT|LENGTH)\b/g;
-const BOOL_LIT = /\b(TRUE|FALSE)\b/g;
-const PROC_DEF = /\bPROCEDURE\s+([A-Za-z_][A-Za-z0-9_]*)/g;
 
 function escHtml(s) {
-  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-}
-
-function highlight(src) {
-  // Process line by line so comments don't bleed
-  return src.split('\n').map(line => {
-    // strip trailing \r
-    line = line.replace(/\r$/, '');
-
-    // Check for comment first
-    const commentIdx = line.indexOf('//');
-
-    let code = commentIdx >= 0 ? line.slice(0, commentIdx) : line;
-    let comment = commentIdx >= 0 ? line.slice(commentIdx) : '';
-
-    // Tokenize the code portion character by character to handle strings
-    let out = '';
-    let i = 0;
-    while (i < code.length) {
-      // String literals
-      if (code[i] === '"' || code[i] === "'") {
-        const q = code[i];
-        let s = q; i++;
-        while (i < code.length && code[i] !== q) {
-          if (code[i] === '\\') { s += code[i++]; }
-          s += code[i++] || '';
-        }
-        s += q; i++;
-        out += `<span class="tok-string">${escHtml(s)}</span>`;
-        continue;
-      }
-      // Numbers
-      if (/\d/.test(code[i])) {
-        let n = code[i++];
-        while (i < code.length && /[\d.]/.test(code[i])) n += code[i++];
-        out += `<span class="tok-number">${escHtml(n)}</span>`;
-        continue;
-      }
-      // Identifiers / keywords
-      if (/[A-Za-z_]/.test(code[i])) {
-        let w = ''; const start = i;
-        while (i < code.length && /[A-Za-z0-9_]/.test(code[i])) w += code[i++];
-        const upper = w.toUpperCase();
-        const kwList = ['IF','ELSE','REPEAT','TIMES','UNTIL','FOR','EACH','IN','PROCEDURE','RETURN','NOT','AND','OR','MOD'];
-        const builtins = ['DISPLAY','INPUT','APPEND','REMOVE','INSERT','LENGTH'];
-        if (upper === 'TRUE' || upper === 'FALSE') {
-          out += `<span class="tok-bool">${escHtml(w)}</span>`;
-        } else if (kwList.includes(upper)) {
-          out += `<span class="tok-keyword">${escHtml(w)}</span>`;
-        } else if (builtins.includes(upper)) {
-          out += `<span class="tok-builtin">${escHtml(w)}</span>`;
-        } else {
-          // peek: is next non-space char a '('? → procedure call
-          let j = i;
-          while (j < code.length && code[j] === ' ') j++;
-          if (code[j] === '(') {
-            out += `<span class="tok-proc-name">${escHtml(w)}</span>`;
-          } else {
-            out += `<span class="tok-ident">${escHtml(w)}</span>`;
-          }
-        }
-        continue;
-      }
-      // Brackets / braces / parens
-      if ('()[]{}'.includes(code[i])) {
-        out += `<span class="tok-bracket">${escHtml(code[i++])}</span>`;
-        continue;
-      }
-      // Arrow ←
-      if (code[i] === '←') {
-        out += `<span class="tok-op">←</span>`; i++;
-        continue;
-      }
-      // Everything else
-      out += escHtml(code[i++]);
-    }
-
-    // append comment span
-    if (comment) {
-      out += `<span class="tok-comment">${escHtml(comment)}</span>`;
-    }
-    return out;
-  }).join('\n');
-}
-
-function syncHighlight() {
-  const src = editor.value;
-  highlightCode.innerHTML = highlight(src) + '\n'; // trailing newline keeps height correct
-}
-
-// ─────────────────────────────────────────────
-// line numbers / gutter
-// ─────────────────────────────────────────────
-
-function buildGutter() {
-  const lines = editor.value.split('\n').length;
-  const curLine = getCurrentLine();
-  let html = '';
-  for (let i = 1; i <= lines; i++) {
-    html += `<span class="gutter-line${i === curLine ? ' current' : ''}">${i}</span>`;
-  }
-  gutter.innerHTML = html;
-}
-
-function getCurrentLine() {
-  const text = editor.value.slice(0, editor.selectionStart);
-  return text.split('\n').length;
-}
-
-function syncGutterScroll() {
-  gutter.scrollTop = codeScroll.scrollTop;
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 // ─────────────────────────────────────────────
@@ -261,10 +128,7 @@ function loadFile(id) {
   activeId = id;
   const f = activeFile();
   editor.value = f.content;
-  syncHighlight();
-  buildGutter();
   updateTabs();
-  updateFileTree();
   updateTitlebar();
   editor.focus();
 }
@@ -294,7 +158,6 @@ function markDirty() {
   if (f && !f.dirty) {
     f.dirty = true;
     updateTabs();
-    updateFileTree();
   }
 }
 
@@ -307,18 +170,6 @@ function updateTabs() {
     tab.querySelector('.tab-name').addEventListener('click', () => loadFile(f.id));
     tab.querySelector('.tab-close').addEventListener('click', e => { e.stopPropagation(); closeFile(f.id); });
     tabBar.appendChild(tab);
-  });
-}
-
-function updateFileTree() {
-  fileTree.innerHTML = '';
-  files.forEach(f => {
-    const item = document.createElement('div');
-    item.className = 'file-item' + (f.id === activeId ? ' active' : '') + (f.dirty ? ' dirty' : '');
-    item.innerHTML = `<span class="file-icon">📄</span><span class="file-name">${escHtml(f.name)}</span><span class="file-close">✕</span>`;
-    item.querySelector('.file-name').addEventListener('click', () => loadFile(f.id));
-    item.querySelector('.file-close').addEventListener('click', e => { e.stopPropagation(); closeFile(f.id); });
-    fileTree.appendChild(item);
   });
 }
 
@@ -336,7 +187,6 @@ function clearConsole() {
 }
 
 function conPrint(text, type = 'output') {
-  // split on newlines so each physical line gets the right prefix
   String(text).split('\n').forEach(line => {
     const span = document.createElement('span');
     span.className = `con-line ${type}`;
@@ -344,23 +194,6 @@ function conPrint(text, type = 'output') {
     consoleOutput.appendChild(span);
   });
   consoleOutput.scrollTop = consoleOutput.scrollHeight;
-}
-
-// ─────────────────────────────────────────────
-// status bar helpers
-// ─────────────────────────────────────────────
-
-function updateCursorPos() {
-  const text = editor.value.slice(0, editor.selectionStart);
-  const ln = text.split('\n').length;
-  const col = text.split('\n').pop().length + 1;
-  sbPos.textContent = `Ln ${ln}, Col ${col}`;
-  buildGutter();
-}
-
-function setStatus(txt, cls = '') {
-  sbStatus.textContent = txt;
-  sbStatus.className = 'sb-item sb-status ' + cls;
 }
 
 // ─────────────────────────────────────────────
@@ -379,10 +212,7 @@ function saveFile() {
   a.click();
   URL.revokeObjectURL(a.href);
   updateTabs();
-  updateFileTree();
   updateTitlebar();
-  setStatus('Saved', '');
-  setTimeout(() => setStatus('Ready'), 1500);
 }
 
 // ─────────────────────────────────────────────
@@ -423,7 +253,6 @@ async function runCode() {
   abortController = new AbortController();
   btnRun.textContent = '■ Stop';
   btnRun.classList.add('running');
-  setStatus('Running…', '');
   clearConsole();
   conPrint('▸ Running ' + (activeFile()?.name || 'file') + '…', 'info');
 
@@ -448,13 +277,10 @@ async function runCode() {
   abortController = null;
   btnRun.textContent = '▶ Run';
   btnRun.classList.remove('running');
-  setStatus('Ready');
 }
 
 function stopExecution() {
   if (abortController) abortController.abort();
-  // If the interpreter is blocked waiting on stdin, unblock it so the
-  // abort signal can be checked on the next tick.
   if (inputResolve) {
     consoleStdin.classList.add('hidden');
     const fn = inputResolve;
@@ -486,61 +312,6 @@ stdinSend.addEventListener('click', submitStdin);
 stdinInput.addEventListener('keydown', e => { if (e.key === 'Enter') submitStdin(); });
 
 // ─────────────────────────────────────────────
-// find
-// ─────────────────────────────────────────────
-
-function openFind() {
-  findBar.classList.remove('hidden');
-  findInput.value = '';
-  findInput.focus();
-  findCount.textContent = '';
-  findMatches = [];
-}
-function closeFind() {
-  findBar.classList.add('hidden');
-  editor.focus();
-}
-
-function doFind() {
-  const term = findInput.value;
-  findMatches = [];
-  if (!term) { findCount.textContent = ''; return; }
-  const src = editor.value;
-  let idx = 0;
-  while (true) {
-    const i = src.toLowerCase().indexOf(term.toLowerCase(), idx);
-    if (i === -1) break;
-    findMatches.push(i);
-    idx = i + 1;
-  }
-  findCount.textContent = findMatches.length
-    ? `${Math.min(findIdx + 1, findMatches.length)} / ${findMatches.length}`
-    : 'No results';
-  if (findMatches.length) jumpToMatch(0);
-}
-
-function jumpToMatch(i) {
-  findIdx = ((i % findMatches.length) + findMatches.length) % findMatches.length;
-  const pos = findMatches[findIdx];
-  editor.focus();
-  editor.setSelectionRange(pos, pos + findInput.value.length);
-  // scroll editor to selection
-  const lines = editor.value.slice(0, pos).split('\n');
-  const lineH = parseFloat(getComputedStyle(editor).lineHeight);
-  codeScroll.scrollTop = (lines.length - 3) * lineH;
-  findCount.textContent = `${findIdx + 1} / ${findMatches.length}`;
-}
-
-findInput.addEventListener('input', doFind);
-document.getElementById('find-next').addEventListener('click', () => {
-  if (findMatches.length) jumpToMatch(findIdx + 1);
-});
-document.getElementById('find-prev').addEventListener('click', () => {
-  if (findMatches.length) jumpToMatch(findIdx - 1);
-});
-document.getElementById('find-close').addEventListener('click', closeFind);
-
-// ─────────────────────────────────────────────
 // toggle comment (Ctrl+/)
 // ─────────────────────────────────────────────
 
@@ -549,7 +320,6 @@ function toggleComment() {
   const end   = editor.selectionEnd;
   const val   = editor.value;
 
-  // find the line range
   const lineStart = val.lastIndexOf('\n', start - 1) + 1;
   const lineEnd   = val.indexOf('\n', end);
   const block     = val.slice(lineStart, lineEnd === -1 ? undefined : lineEnd);
@@ -572,7 +342,7 @@ function toggleComment() {
 }
 
 // ─────────────────────────────────────────────
-// indent selection (Tab / Edit → Indent)
+// indent selection (Tab)
 // ─────────────────────────────────────────────
 
 function indentSelection() {
@@ -599,8 +369,6 @@ function indentSelection() {
 // ─────────────────────────────────────────────
 
 function onEditorInput() {
-  syncHighlight();
-  buildGutter();
   markDirty();
   updateTitlebar();
 }
@@ -633,132 +401,26 @@ editor.addEventListener('keydown', e => {
     onEditorInput();
     return;
   }
-  // Auto-close braces
-  if (e.key === '{') {
-    // let it type, then auto-add newline + closing brace hint is too complex; skip
-  }
   // Ctrl+Enter → run
   if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); runCode(); return; }
   // Ctrl+/ → comment
   if (e.key === '/' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); toggleComment(); return; }
   // Ctrl+S → save
   if (e.key === 's' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); saveFile(); return; }
-  // Ctrl+F → find
-  if (e.key === 'f' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); openFind(); return; }
-  // Esc → close find
-  if (e.key === 'Escape') { closeFind(); }
 });
-
-editor.addEventListener('keyup', updateCursorPos);
-editor.addEventListener('click', updateCursorPos);
-
-// keep gutter in sync with editor scroll
-codeScroll.addEventListener('scroll', () => {
-  gutter.scrollTop = codeScroll.scrollTop;
-});
-
-// ─────────────────────────────────────────────
-// menus
-// ─────────────────────────────────────────────
-
-const menuItems = document.querySelectorAll('.menu-item');
-const menuDropdowns = document.querySelectorAll('.menu-dropdown');
-
-let openMenu = null;
-
-menuItems.forEach(item => {
-  item.addEventListener('click', e => {
-    e.stopPropagation();
-    const id = 'menu-' + item.dataset.menu;
-    const drop = document.getElementById(id);
-    if (!drop) return;
-    if (openMenu && openMenu !== drop) {
-      openMenu.classList.add('hidden');
-      document.querySelector('.menu-item.active')?.classList.remove('active');
-    }
-    const isOpen = !drop.classList.contains('hidden');
-    drop.classList.toggle('hidden', isOpen);
-    item.classList.toggle('active', !isOpen);
-
-    if (!isOpen) {
-      // position it below the menu item
-      const rect = item.getBoundingClientRect();
-      drop.style.left = rect.left + 'px';
-      openMenu = drop;
-    } else {
-      openMenu = null;
-    }
-  });
-});
-
-document.addEventListener('click', () => {
-  menuDropdowns.forEach(d => d.classList.add('hidden'));
-  menuItems.forEach(m => m.classList.remove('active'));
-  openMenu = null;
-});
-
-document.querySelectorAll('.menu-opt').forEach(opt => {
-  opt.addEventListener('click', e => {
-    e.stopPropagation();
-    menuDropdowns.forEach(d => d.classList.add('hidden'));
-    menuItems.forEach(m => m.classList.remove('active'));
-    openMenu = null;
-    handleMenuAction(opt.dataset.action);
-  });
-});
-
-function handleMenuAction(action) {
-  switch (action) {
-    case 'new':     newFile(); break;
-    case 'open':    fileInput.click(); break;
-    case 'save':    saveFile(); break;
-    case 'example': loadExample(); break;
-    case 'comment': toggleComment(); break;
-    case 'indent':  indentSelection(); break;
-    case 'find':    openFind(); break;
-    case 'run':     runCode(); break;
-    case 'stop':    stopExecution(); break;
-    case 'clear-console': clearConsole(); break;
-    case 'toggle-sidebar': {
-      const hidden = sidebar.style.display === 'none';
-      sidebar.style.display = hidden ? '' : 'none';
-      sidebarResize.style.display = hidden ? '' : 'none';
-      break;
-    }
-    case 'toggle-console': {
-      const hidden = consolePanel.style.display === 'none';
-      consolePanel.style.display = hidden ? '' : 'none';
-      consoleResize.style.display = hidden ? '' : 'none';
-      break;
-    }
-    case 'zoom-in':  fontSize = Math.min(24, fontSize + 1); applyFontSize(); break;
-    case 'zoom-out': fontSize = Math.max(9, fontSize - 1);  applyFontSize(); break;
-    case 'reference': overlay.classList.remove('hidden'); break;
-    case 'about':
-      conPrint('APCSP Pseudocode IDE — built for the College Board AP CS Principles course.', 'info');
-      break;
-  }
-}
-
-function applyFontSize() {
-  const px = fontSize + 'px';
-  editor.style.fontSize = px;
-  document.getElementById('highlight-layer').style.fontSize = px;
-  gutter.style.fontSize = px;
-  buildGutter();
-}
 
 // ─────────────────────────────────────────────
 // toolbar buttons
 // ─────────────────────────────────────────────
 
 document.getElementById('btn-run').addEventListener('click', runCode);
-document.getElementById('btn-new').addEventListener('click', () => newFile());
-document.getElementById('btn-save').addEventListener('click', saveFile);
-document.getElementById('btn-new-file').addEventListener('click', () => {
-  const name = prompt('File name:', 'new.apcsp');
+document.getElementById('btn-new').addEventListener('click', () => {
+  const name = prompt('File name:', `untitled${nextId}.apcsp`);
   if (name) newFile(name.endsWith('.apcsp') ? name : name + '.apcsp');
 });
+document.getElementById('btn-open').addEventListener('click', () => fileInput.click());
+document.getElementById('btn-save').addEventListener('click', saveFile);
+document.getElementById('btn-reference').addEventListener('click', () => overlay.classList.remove('hidden'));
 document.getElementById('btn-clear-console').addEventListener('click', clearConsole);
 
 // ─────────────────────────────────────────────
@@ -771,61 +433,7 @@ document.addEventListener('keydown', e => {
   if (e.key === 'n' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); newFile(); }
   if (e.key === 'o' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); fileInput.click(); }
   if (e.key === 's' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); saveFile(); }
-  if (e.key === 'f' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); openFind(); }
-  if (e.key === 'b' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); handleMenuAction('toggle-sidebar'); }
-  if (e.key === '`' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); handleMenuAction('toggle-console'); }
-  if (e.key === 'Escape') closeFind();
 });
-
-// ─────────────────────────────────────────────
-// resizable panels
-// ─────────────────────────────────────────────
-
-// sidebar ←→
-(function() {
-  let dragging = false, startX, startW;
-  sidebarResize.addEventListener('mousedown', e => {
-    dragging = true; startX = e.clientX; startW = sidebar.offsetWidth;
-    sidebarResize.classList.add('dragging');
-    document.body.style.userSelect = 'none';
-    document.body.style.cursor = 'col-resize';
-  });
-  document.addEventListener('mousemove', e => {
-    if (!dragging) return;
-    const w = Math.max(120, Math.min(400, startW + (e.clientX - startX)));
-    sidebar.style.width = w + 'px';
-  });
-  document.addEventListener('mouseup', () => {
-    if (!dragging) return;
-    dragging = false;
-    sidebarResize.classList.remove('dragging');
-    document.body.style.userSelect = '';
-    document.body.style.cursor = '';
-  });
-})();
-
-// console ↕
-(function() {
-  let dragging = false, startY, startH;
-  consoleResize.addEventListener('mousedown', e => {
-    dragging = true; startY = e.clientY; startH = consolePanel.offsetHeight;
-    consoleResize.classList.add('dragging');
-    document.body.style.userSelect = 'none';
-    document.body.style.cursor = 'row-resize';
-  });
-  document.addEventListener('mousemove', e => {
-    if (!dragging) return;
-    const h = Math.max(80, Math.min(window.innerHeight * 0.7, startH - (e.clientY - startY)));
-    consolePanel.style.height = h + 'px';
-  });
-  document.addEventListener('mouseup', () => {
-    if (!dragging) return;
-    dragging = false;
-    consoleResize.classList.remove('dragging');
-    document.body.style.userSelect = '';
-    document.body.style.cursor = '';
-  });
-})();
 
 // ─────────────────────────────────────────────
 // modal
@@ -835,32 +443,13 @@ document.getElementById('modal-close').addEventListener('click', () => overlay.c
 overlay.addEventListener('click', e => { if (e.target === overlay) overlay.classList.add('hidden'); });
 
 // ─────────────────────────────────────────────
-// example
-// ─────────────────────────────────────────────
-
-function loadExample() {
-  const f = activeFile();
-  if (f && f.content.trim() && !confirm('Replace current file with the example?')) return;
-  editor.value = EXAMPLE_CODE;
-  if (f) f.content = EXAMPLE_CODE;
-  onEditorInput();
-  editor.focus();
-}
-
-// ─────────────────────────────────────────────
 // init
 // ─────────────────────────────────────────────
 
 (function init() {
   editor.value = files[0].content;
-  syncHighlight();
-  buildGutter();
   updateTabs();
-  updateFileTree();
   updateTitlebar();
-  updateCursorPos();
   editor.focus();
-  // put cursor at end
   editor.selectionStart = editor.selectionEnd = editor.value.length;
-  updateCursorPos();
 })();
