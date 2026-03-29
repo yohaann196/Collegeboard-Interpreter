@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>APCSP IDE</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,700;1,400&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+</head>
+<body>
+
+  <!-- title bar -->
+  <div class="titlebar">
+    <div class="titlebar-left">
+      <div class="traffic-lights">
+        <span class="tl tl-red"></span>
+        <span class="tl tl-yellow"></span>
+        <span class="tl tl-green"></span>
+      </div>
+      <span class="app-name">APCSP IDE</span>
+    </div>
+    <div class="titlebar-center" id="active-filename">untitled.apcsp</div>
+    <div class="titlebar-right">
+      <button class="tb-btn" id="btn-new">＋ New</button>
+      <button class="tb-btn" id="btn-save">↓ Save</button>
+      <button class="tb-btn run-btn" id="btn-run">▶ Run</button>
+    </div>
+  </div>
+
+  <!-- menu bar -->
+  <div class="menubar" id="menubar">
+    <div class="menu-item" data-menu="file">File</div>
+    <div class="menu-item" data-menu="edit">Edit</div>
+    <div class="menu-item" data-menu="view">View</div>
+    <div class="menu-item" data-menu="run">Run</div>
+    <div class="menu-item" data-menu="help">Help</div>
+
+    <div class="menu-dropdown hidden" id="menu-file">
+      <div class="menu-opt" data-action="new">New File <span>Ctrl+N</span></div>
+      <div class="menu-opt" data-action="open">Open… <span>Ctrl+O</span></div>
+      <div class="menu-opt" data-action="save">Save <span>Ctrl+S</span></div>
+      <div class="menu-sep"></div>
+      <div class="menu-opt" data-action="example">Load Example</div>
+    </div>
+    <div class="menu-dropdown hidden" id="menu-edit">
+      <div class="menu-opt" data-action="comment">Toggle Comment <span>Ctrl+/</span></div>
+      <div class="menu-opt" data-action="indent">Indent <span>Tab</span></div>
+      <div class="menu-opt" data-action="find">Find <span>Ctrl+F</span></div>
+    </div>
+    <div class="menu-dropdown hidden" id="menu-view">
+      <div class="menu-opt" data-action="toggle-sidebar">Toggle Sidebar <span>Ctrl+B</span></div>
+      <div class="menu-opt" data-action="toggle-console">Toggle Console <span>Ctrl+`</span></div>
+      <div class="menu-opt" data-action="zoom-in">Zoom In <span>Ctrl++</span></div>
+      <div class="menu-opt" data-action="zoom-out">Zoom Out <span>Ctrl+-</span></div>
+    </div>
+    <div class="menu-dropdown hidden" id="menu-run">
+      <div class="menu-opt" data-action="run">Run <span>Ctrl+Enter</span></div>
+      <div class="menu-opt" data-action="stop">Stop</div>
+      <div class="menu-sep"></div>
+      <div class="menu-opt" data-action="clear-console">Clear Console</div>
+    </div>
+    <div class="menu-dropdown hidden" id="menu-help">
+      <div class="menu-opt" data-action="reference">Pseudocode Reference</div>
+      <div class="menu-opt" data-action="about">About</div>
+    </div>
+  </div>
+
+  <!-- workspace -->
+  <div class="workspace" id="workspace">
+
+    <!-- sidebar -->
+    <div class="sidebar" id="sidebar">
+      <div class="sidebar-header">EXPLORER</div>
+      <div class="sidebar-project">
+        <span class="sidebar-caret">▾</span>
+        <span>MY PROJECT</span>
+      </div>
+      <div id="file-tree"></div>
+      <div class="sidebar-new-file" id="btn-new-file">＋ New File</div>
+    </div>
+
+    <div class="resize-handle" id="sidebar-resize"></div>
+
+    <!-- editor + console column -->
+    <div class="main-col" id="main-col">
+
+      <!-- tab bar -->
+      <div class="tab-bar" id="tab-bar"></div>
+
+      <!-- find bar -->
+      <div class="find-bar hidden" id="find-bar">
+        <span class="find-label">Find</span>
+        <input id="find-input" type="text" placeholder="Search in file…" />
+        <button class="find-btn" id="find-prev">↑</button>
+        <button class="find-btn" id="find-next">↓</button>
+        <span id="find-count" class="find-count"></span>
+        <button class="find-btn" id="find-close">✕</button>
+      </div>
+
+      <!-- code editor -->
+      <div class="code-pane" id="code-pane">
+        <div class="gutter" id="gutter"></div>
+        <div class="code-scroll" id="code-scroll">
+          <!-- syntax highlight layer sits behind textarea -->
+          <pre class="highlight-layer" id="highlight-layer" aria-hidden="true"><code id="highlight-code"></code></pre>
+          <textarea id="editor"
+            spellcheck="false"
+            autocomplete="off"
+            autocorrect="off"
+            autocapitalize="off"
+            wrap="off"></textarea>
+        </div>
+      </div>
+
+      <!-- drag handle between editor and console -->
+      <div class="console-resize" id="console-resize"></div>
+
+      <!-- console -->
+      <div class="console-panel" id="console-panel">
+        <div class="console-header">
+          <div class="console-tabs">
+            <span class="con-tab active">CONSOLE</span>
+          </div>
+          <div class="console-header-right">
+            <button id="btn-clear-console">⊘ Clear</button>
+          </div>
+        </div>
+        <div class="console-output" id="console-output">
+          <span class="con-welcome">▸ Ready. Press <kbd>Ctrl+Enter</kbd> to run your program.</span>
+        </div>
+        <div class="console-stdin hidden" id="console-stdin">
+          <span class="stdin-label">stdin &gt;</span>
+          <input id="stdin-input" type="text" autocomplete="off" placeholder="Enter input…" />
+          <button id="stdin-send">Send</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- status bar -->
+  <div class="statusbar">
+    <div class="sb-left">
+      <span class="sb-item" id="sb-branch">⎇ main</span>
+      <span class="sb-item" id="sb-err"></span>
+    </div>
+    <div class="sb-right">
+      <span class="sb-item" id="sb-pos">Ln 1, Col 1</span>
+      <span class="sb-item">APCSP Pseudocode</span>
+      <span class="sb-item">UTF-8</span>
+      <span class="sb-item sb-status" id="sb-status">Ready</span>
+    </div>
+  </div>
+
+  <!-- reference modal -->
+  <div class="overlay hidden" id="overlay">
+    <div class="modal">
+      <div class="modal-header">
+        <span>APCSP Pseudocode Quick Reference</span>
+        <button id="modal-close">✕</button>
+      </div>
+      <div class="modal-body">
+        <table class="ref-table">
+          <thead><tr><th>Construct</th><th>Syntax</th></tr></thead>
+          <tbody>
+            <tr><td>Assignment</td><td><code>x ← value</code> &nbsp;or&nbsp; <code>x <- value</code></td></tr>
+            <tr><td>Display</td><td><code>DISPLAY(x)</code></td></tr>
+            <tr><td>Input</td><td><code>x ← INPUT()</code></td></tr>
+            <tr><td>If</td><td><code>IF (cond) { }</code></td></tr>
+            <tr><td>If / Else</td><td><code>IF (cond) { } ELSE { }</code></td></tr>
+            <tr><td>Repeat N Times</td><td><code>REPEAT n TIMES { }</code></td></tr>
+            <tr><td>Repeat Until</td><td><code>REPEAT UNTIL (cond) { }</code></td></tr>
+            <tr><td>For Each</td><td><code>FOR EACH item IN list { }</code></td></tr>
+            <tr><td>Procedure</td><td><code>PROCEDURE name(p1, p2) { }</code></td></tr>
+            <tr><td>Return</td><td><code>RETURN(value)</code></td></tr>
+            <tr><td>List literal</td><td><code>x ← [1, 2, 3]</code></td></tr>
+            <tr><td>List index <em>(1-based)</em></td><td><code>x[1]</code></td></tr>
+            <tr><td>Append</td><td><code>APPEND(list, val)</code></td></tr>
+            <tr><td>Remove</td><td><code>REMOVE(list, i)</code></td></tr>
+            <tr><td>Insert</td><td><code>INSERT(list, i, val)</code></td></tr>
+            <tr><td>Length</td><td><code>LENGTH(list)</code></td></tr>
+            <tr><td>Modulo</td><td><code>x MOD y</code></td></tr>
+            <tr><td>Logic</td><td><code>NOT</code> &nbsp;<code>AND</code> &nbsp;<code>OR</code></td></tr>
+            <tr><td>Comparison</td><td><code>= != &lt; &gt; &lt;= &gt;=</code></td></tr>
+            <tr><td>Line comment</td><td><code>// comment text</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <input type="file" id="file-input" accept=".apcsp,.txt" style="display:none" />
+
+  <script src="interpreter.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
